@@ -1,39 +1,66 @@
 import { useState } from 'react'
+import MeetingShell from './MeetingShell'
 import VoiceQuestion from './VoiceQuestion'
 import ClinicianView from './ClinicianView'
-
-const tabStyle = (active) => ({
-  padding: '8px 16px',
-  border: 'none',
-  borderBottom: active ? '2px solid #2563eb' : '2px solid transparent',
-  background: 'none',
-  fontWeight: active ? 600 : 400,
-  cursor: 'pointer',
-})
+import FaqPage from './FaqPage'
+import PortalTab from './PortalTab'
+import PersonaQuestions from './PersonaQuestions'
+import { loadAccount, saveAccount } from './personas'
+import { useVoiceRecorder } from './useVoiceRecorder'
 
 function App() {
-  const [tab, setTab] = useState('patient')
+  const view = new URLSearchParams(window.location.search).get('view') || 'patient'
+  const [panelTab, setPanelTab] = useState('qa')
+  const [faqFocus, setFaqFocus] = useState(null)
+
+  // Persona/account selection is shared with the Portal tab's picker via
+  // sessionStorage, so the two can never disagree about who "you" are.
+  const [account, setAccountState] = useState(loadAccount)
+
+  function setAccount(next) {
+    saveAccount(next)
+    setAccountState(next)
+  }
+
+  // Lives here so the meeting control bar's mic button, the "You" tile, and the
+  // panel all drive and read the same recorder.
+  const recorder = useVoiceRecorder()
+
+  // Standalone FAQ page — kept working for direct links / a full-screen beat.
+  if (view === 'faq') return <FaqPage />
+
+  // `clinician` is the only accepted value for the clinician panel — the URL is
+  // the single source of truth for a tab's role, so the two-tab demo works.
+  const role = view === 'clinician' ? 'clinician' : 'patient'
+
+  function openFaq(entryId) {
+    setFaqFocus(entryId)
+    setPanelTab('faq')
+  }
+
+  function panelContent() {
+    if (panelTab === 'faq') return <FaqPage embedded focusId={faqFocus} />
+    if (panelTab === 'portal') return <PortalTab account={account} setAccount={setAccount} />
+    if (role === 'clinician') return <ClinicianView />
+    // A seeded persona is a read-only viewing lens; the recorder belongs to the
+    // live "yourself" identity only.
+    if (account === 'maria' || account === 'sam') {
+      return <PersonaQuestions personaKey={account} onOpenPortal={() => setPanelTab('portal')} />
+    }
+    return <VoiceQuestion recorder={recorder} onOpenFaq={openFaq} />
+  }
 
   return (
-    <div style={{ fontFamily: 'sans-serif' }}>
-      <nav
-        style={{
-          display: 'flex',
-          justifyContent: 'center',
-          gap: 8,
-          borderBottom: '1px solid #ddd',
-        }}
-      >
-        <button style={tabStyle(tab === 'patient')} onClick={() => setTab('patient')}>
-          Patient
-        </button>
-        <button style={tabStyle(tab === 'clinician')} onClick={() => setTab('clinician')}>
-          Clinician
-        </button>
-      </nav>
-
-      {tab === 'patient' ? <VoiceQuestion /> : <ClinicianView />}
-    </div>
+    <MeetingShell
+      role={role}
+      recorder={recorder}
+      panelTab={panelTab}
+      setPanelTab={setPanelTab}
+      account={account}
+      setAccount={setAccount}
+    >
+      {panelContent()}
+    </MeetingShell>
   )
 }
 

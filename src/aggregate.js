@@ -1,3 +1,5 @@
+import { FAQ_ENTRIES } from './faq';
+
 const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
 
 /**
@@ -19,7 +21,7 @@ export async function runAggregation(medplum, groupId, liveTranscript = null, ex
   // NOTE: `about` is not a valid FHIR search parameter on Communication — the
   // Medplum server rejects `Communication?about=Group/x` with "Unknown search
   // parameter". Fetch and filter on the reference here instead.
-  const all = await medplum.searchResources('Communication', { _count: '100' });
+  const all = await medplum.searchResources('Communication', { _count: '1000' });
   const dummyQuestions = all
     .filter((c) => c.about?.some((ref) => ref.reference === `Group/${groupId}`))
     .filter((c) => c.id !== excludeId)
@@ -31,6 +33,19 @@ export async function runAggregation(medplum, groupId, liveTranscript = null, ex
 
   const prompt = `Here are ${allQuestions.length} patient questions from a prediabetes lifestyle seminar, numbered starting at 0:
 ${allQuestions.map((q, i) => `${i}: ${q}`).join('\n')}
+
+The hosting dietitian's website has an FAQ page with these already-answered
+questions:
+${FAQ_ENTRIES.map((f) => `- ${f.id}: ${f.question}`).join('\n')}
+
+For each patient question that is clearly and substantially answered by one of
+these FAQ entries, record the match. Only match when the FAQ entry genuinely
+answers what was asked — a shared topic is not enough. A question that is answered
+by an FAQ entry should STILL appear in its cluster's memberIndices as normal
+(the clinician may still want to address the theme live); the FAQ match is
+additional, not a replacement. Never match flagged questions to FAQ entries —
+anything involving medications, symptoms, pregnancy, or disordered eating needs
+individual attention, not a self-serve link.
 
 Group these into thematic clusters. For each cluster, write ONE synthesized question
 that blends the general shared theme with 1-2 of the most specific, notable details
@@ -45,12 +60,24 @@ something like "What are the effects of exercise on my blood glucose if I have h
 fasting glucose, like HIIT?" — not the fully generic "What's the best exercise for
 blood sugar?" and not narrowed down to only one patient's exact situation either.
 
-Return ONLY valid JSON, no markdown fences, no other text, in this exact shape:
-{"clusters":[{"label":"...","synthesizedQuestion":"...","memberIndices":[0,4,7]}],"flaggedIndices":[15,42]}
+Produce between 5 and 8 clusters — never more than 8. Merge closely related
+topics rather than splitting hairs: the output is a short list a clinician works
+through live, so a handful of broad, well-named themes beats many narrow ones.
 
-flaggedIndices = indices of any question mentioning medications, symptoms,
-pregnancy, or self-harm/disordered eating, regardless of which theme it's otherwise
-close to. A flagged question should NOT also appear in any cluster's memberIndices.`;
+Every question index must appear exactly once in the output — in exactly one
+cluster's memberIndices, or in flaggedIndices. Do not leave any index unplaced.
+
+Return ONLY valid JSON, no markdown fences, no other text, in this exact shape:
+{"clusters":[{"label":"...","synthesizedQuestion":"...","memberIndices":[0,4,7]}],"flaggedIndices":[15,42],"faqMatches":[{"questionIndex":12,"faqId":"sugar-cravings"}]}
+
+flaggedIndices = indices of questions that name a medication, describe a physical
+symptom the person is experiencing, mention pregnancy, or suggest self-harm or
+disordered eating — regardless of which theme they are otherwise close to. A
+flagged question should NOT also appear in any cluster's memberIndices.
+
+flaggedIndices is NOT a catch-all. Do not flag a question merely because it is
+vague, unusual, or hard to place. If a question does not clearly meet one of the
+four conditions above, put it in the closest cluster even if the fit is loose.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -62,7 +89,7 @@ close to. A flagged question should NOT also appear in any cluster's memberIndic
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{ role: 'user', content: prompt }],
     }),
   });
@@ -86,12 +113,28 @@ close to. A flagged question should NOT also appear in any cluster's memberIndic
 
   const clusters = parsed.clusters.map((c) => ({ ...c, patientCount: c.memberIndices.length }));
   const flaggedQuestions = (parsed.flaggedIndices || []).map((i) => allQuestions[i]);
+  const flaggedIndices = parsed.flaggedIndices || [];
+
+  // Resolve matches against real entries. A plausible-but-invented faqId is a
+  // realistic model failure — drop those rather than render a dead link.
+  // Flagged questions never get a link, belt-and-braces with the prompt rule.
+  const faqMatches = (parsed.faqMatches || [])
+    .map((m) => {
+      const entry = FAQ_ENTRIES.find((f) => f.id === m.faqId);
+      if (!entry) return null;
+      if (flaggedIndices.includes(m.questionIndex)) return null;
+      return { questionIndex: m.questionIndex, entry };
+    })
+    .filter(Boolean);
 
   let myCluster = null;
   if (myIndex !== null) {
-    const amFlagged = (parsed.flaggedIndices || []).includes(myIndex);
+    const amFlagged = flaggedIndices.includes(myIndex);
     myCluster = amFlagged ? 'flagged' : clusters.find((c) => c.memberIndices.includes(myIndex)) || null;
   }
 
-  return { clusters, flaggedQuestions, myCluster };
+  const myFaqMatch =
+    myIndex !== null ? faqMatches.find((m) => m.questionIndex === myIndex)?.entry || null : null;
+
+  return { clusters, flaggedQuestions, faqMatches, myCluster, myFaqMatch };
 }
