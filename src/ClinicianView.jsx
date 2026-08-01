@@ -80,6 +80,7 @@ function ClinicianView() {
           {raw.map((c) => (
             <li key={c.id}>
               {c.payload?.[0]?.contentString ?? <em>(no text)</em>}
+              <span style={{ color: '#999' }}> — {c.subject?.reference ?? 'no subject'}</span>
             </li>
           ))}
         </ol>

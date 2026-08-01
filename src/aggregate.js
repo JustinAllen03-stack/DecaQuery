@@ -33,9 +33,17 @@ export async function runAggregation(medplum, groupId, liveTranscript = null, ex
 ${allQuestions.map((q, i) => `${i}: ${q}`).join('\n')}
 
 Group these into thematic clusters. For each cluster, write ONE synthesized question
-that represents the shared underlying concern of everyone in that cluster — don't
-just copy one patient's exact wording, write a single clear question covering the
-theme.
+that blends the general shared theme with 1-2 of the most specific, notable details
+that actually came up in that cluster's questions — a specific exercise type, food,
+timing, condition, etc. Don't flatten it into a fully generic question, and don't
+just copy one patient's exact wording either. Aim for general-plus-niche in a single
+smooth, natural-sounding question, roughly one sentence long.
+
+Example of the right level of specificity: if a cluster contains questions about
+exercise and blood sugar, several of which specifically mention HIIT, write
+something like "What are the effects of exercise on my blood glucose if I have high
+fasting glucose, like HIIT?" — not the fully generic "What's the best exercise for
+blood sugar?" and not narrowed down to only one patient's exact situation either.
 
 Return ONLY valid JSON, no markdown fences, no other text, in this exact shape:
 {"clusters":[{"label":"...","synthesizedQuestion":"...","memberIndices":[0,4,7]}],"flaggedIndices":[15,42]}
